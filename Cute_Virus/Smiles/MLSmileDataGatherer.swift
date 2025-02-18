@@ -160,9 +160,7 @@ class LandmarkExtractor: NSObject, ObservableObject, AVCaptureVideoDataOutputSam
 	private func saveCSV() {
 		let fileName = "trainingLips.csv"
 		let filePath = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
-		
 		let csvString = csvData.map { $0.joined(separator: ",") }.joined(separator: "\n")
-		
 		do {
 			try csvString.write(to: filePath, atomically: true, encoding: .utf8)
 			DispatchQueue.main.async {

@@ -9,6 +9,7 @@ class MLModelTester: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
 	
 	@Published var outerLipsPath: Path?
 	@Published var predictionText: String = "Detecting..."
+	@Published var predictionLevel: String = ""
 	
 	override init() {
 		super.init()
@@ -101,11 +102,13 @@ class MLModelTester: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleB
 				
 			
 			let prediction = try model.prediction(input: input)
-			print(prediction.SmileLabel)
+			//print(prediction.SmileLabelProbability)
 			let isSmiling = prediction.SmileLabel == 1
+			let probString = String(format: "%.2f", prediction.SmileLabelProbability[1] ?? 0.0)
 			
 			DispatchQueue.main.async {
 				self.predictionText = isSmiling ? "😃 Smiling!" : "😐 Not Smiling"
+				self.predictionLevel = probString
 			}
 		} catch {
 			print("Prediction error: \(error)")
@@ -196,6 +199,9 @@ struct MLModelTestView: View {
 		ZStack {
 			MLCameraPreview(session: tester.session)
 				.edgesIgnoringSafeArea(.all)
+				.onAppear{
+					tester.startSession()
+				}
 
 			Canvas { context, size in
 				if let outerLips = tester.outerLipsPath {
@@ -204,22 +210,19 @@ struct MLModelTestView: View {
 			}
 
 			VStack {
+				Spacer()
 				Text(tester.predictionText)
 					.font(.largeTitle)
 					.bold()
 					.padding()
 					.background(Color.white.opacity(0.8))
 					.cornerRadius(10)
-
-				Button("Start Session") {
-					tester.startSession()
-				}
-				.buttonStyle(.borderedProminent)
-
-				Button("Stop Session") {
-					tester.stopSession()
-				}
-				.buttonStyle(.borderedProminent)
+				Text(tester.predictionLevel)
+					.font(.largeTitle)
+					.bold()
+					.padding()
+					.background(Color.white.opacity(0.8))
+					.cornerRadius(10)
 			}
 			.padding(.bottom, 50)
 		}
