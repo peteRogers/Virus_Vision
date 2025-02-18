@@ -12,7 +12,7 @@ struct ContentView: View {
         ZStack {
 			Rectangle()
 				.fill(Color.black)
-			VisionFace()
+			MLModelTestView()
 		}.edgesIgnoringSafeArea(.all)
     }
 }

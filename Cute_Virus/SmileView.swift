@@ -1,14 +1,6 @@
-//
-//  SmileView.swift
-//  Cute_Virus
-//
-//  Created by Peter Rogers on 11/02/2025.
-//
-
 import SwiftUI
 import AVFoundation
 import Vision
-import CoreImage
 
 struct SmileDetectionView: View {
 	@StateObject private var cameraModel = CameraModel()
@@ -18,16 +10,15 @@ struct SmileDetectionView: View {
 			SmileCameraPreview(session: cameraModel.session)
 				.edgesIgnoringSafeArea(.all)
 
-			VStack {
-				Spacer()
-				Text(cameraModel.smileStatus)
-					.font(.title)
-					.padding()
-					.background(cameraModel.smileDetected ? Color.green.opacity(0.7) : Color.black.opacity(0.7))
-					.foregroundColor(.white)
-					.cornerRadius(10)
-					.padding(.bottom, 50)
+			Canvas { context, size in
+				if let outerLips = cameraModel.outerLipsPath {
+					context.stroke(outerLips, with: .color(.red), lineWidth: 2)
+				}
+				if let innerLips = cameraModel.innerLipsPath {
+					context.stroke(innerLips, with: .color(.blue), lineWidth: 2)
+				}
 			}
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
 		}
 		.onAppear {
 			cameraModel.startSession()
@@ -38,14 +29,13 @@ struct SmileDetectionView: View {
 	}
 }
 
-// MARK: - Camera Model for Smile Detection
+// MARK: - Camera Model for Lip Detection
 class CameraModel: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBufferDelegate {
 	let session = AVCaptureSession()
-	private let ciContext = CIContext()
 	
-	@Published var smileStatus: String = "🙂 No Smile"
-	@Published var smileDetected: Bool = false
-	
+	@Published var outerLipsPath: Path?
+	@Published var innerLipsPath: Path?
+
 	override init() {
 		super.init()
 		setupCamera()
@@ -85,63 +75,70 @@ class CameraModel: NSObject, ObservableObject, AVCaptureVideoDataOutputSampleBuf
 	func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
 		guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 		
-		let request = VNDetectFaceRectanglesRequest { [weak self] request, error in
+		let request = VNDetectFaceLandmarksRequest { [weak self] request, error in
 			guard let self = self,
 				  let results = request.results as? [VNFaceObservation],
-				  let firstFace = results.first else {
+				  let firstFace = results.first,
+				  let landmarks = firstFace.landmarks else {
 				DispatchQueue.main.async {
-					self?.smileStatus = "No Face Detected"
-					self?.smileDetected = false
+					self?.outerLipsPath = nil
+					self?.innerLipsPath = nil
 				}
 				return
 			}
 			
-			let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-			let faceBounds = self.convertBoundingBox(firstFace.boundingBox, in: ciImage)
-			
-			if let faceImage = self.croppedFace(from: ciImage, faceBounds: faceBounds) {
-				print("bounding found")
-				self.detectSmile(in: faceImage)
-			}
+			self.extractLipPaths(from: landmarks, faceBoundingBox: firstFace.boundingBox)
 		}
 		
 		let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
 		try? handler.perform([request])
 	}
 	
-	// Detect Smile using CIDetector
-	private func detectSmile(in faceImage: CIImage) {
-		let detectorOptions: [String: Any] = [CIDetectorAccuracy: CIDetectorAccuracyHigh]
-		let faceDetector = CIDetector(ofType: CIDetectorTypeFace, context: nil, options: detectorOptions)
-		let faces = faceDetector?.features(in: faceImage) as? [CIFaceFeature] ?? []
-		print(faces)
+	// Convert Lip Landmarks to SwiftUI Paths
+	private func extractLipPaths(from landmarks: VNFaceLandmarks2D, faceBoundingBox: CGRect) {
 		DispatchQueue.main.async {
-			if let face = faces.first, face.hasSmile {
-				self.smileStatus = "😁 Smiling!"
-				self.smileDetected = true
-			} else {
-				self.smileStatus = "🙂 No Smile"
-				self.smileDetected = false
+			if let outerLips = landmarks.outerLips {
+				self.outerLipsPath = self.createLipPath(from: outerLips, faceBoundingBox: faceBoundingBox)
+			}
+			if let innerLips = landmarks.innerLips {
+				self.innerLipsPath = self.createLipPath(from: innerLips, faceBoundingBox: faceBoundingBox)
 			}
 		}
 	}
 	
-	// Convert Vision bounding box to CIImage coordinates
-	private func convertBoundingBox(_ boundingBox: CGRect, in image: CIImage) -> CGRect {
-		let width = image.extent.width
-		let height = image.extent.height
-
-		let x = boundingBox.origin.x * width
-		let y = (1 - boundingBox.origin.y - boundingBox.height) * height
-		let w = boundingBox.width * width
-		let h = boundingBox.height * height
-
-		return CGRect(x: x, y: y, width: w, height: h)
+	// Create a SwiftUI Path from VNFaceLandmarkRegion2D
+	private func createLipPath(from region: VNFaceLandmarkRegion2D, faceBoundingBox: CGRect) -> Path {
+		var path = Path()
+		let faceRect = convertBoundingBox(faceBoundingBox)
+		
+		let points = region.normalizedPoints.map { point in
+			CGPoint(
+				x: faceRect.origin.x + (point.x * faceRect.width),
+				y: faceRect.origin.y + (point.y * faceRect.height)
+			)
+		}
+		
+		if let firstPoint = points.first {
+			path.move(to: firstPoint)
+			for point in points.dropFirst() {
+				path.addLine(to: point)
+			}
+			path.closeSubpath()
+		}
+		
+		return path
 	}
 	
-	// Crop Face Region from CIImage
-	private func croppedFace(from image: CIImage, faceBounds: CGRect) -> CIImage? {
-		return image.cropped(to: faceBounds)
+	// Convert Vision bounding box to SwiftUI coordinate space
+	private func convertBoundingBox(_ boundingBox: CGRect) -> CGRect {
+		let screenWidth = UIScreen.main.bounds.width
+		let screenHeight = UIScreen.main.bounds.height
+		return CGRect(
+			x: boundingBox.origin.x * screenWidth,
+			y: (1 - boundingBox.origin.y - boundingBox.height) * screenHeight,
+			width: boundingBox.width * screenWidth,
+			height: boundingBox.height * screenHeight
+		)
 	}
 }
 
@@ -162,7 +159,7 @@ struct SmileCameraPreview: UIViewRepresentable {
 }
 
 // MARK: - Preview
-struct SmileDetectionView_Previews: PreviewProvider {
+struct LipDetectionView_Previews: PreviewProvider {
 	static var previews: some View {
 		SmileDetectionView()
 	}

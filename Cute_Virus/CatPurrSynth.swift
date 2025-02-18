@@ -13,13 +13,10 @@ import Foundation
 
 class CatPurrSynth: ObservableObject  {
 	let engine = AudioEngine()
-
 	// Noise source
 	let noise = PinkNoise()
-
 	// Tremolo node for amplitude modulation
 	let tremolo: Tremolo
-
 	// Filter to shape the noise
 	let filter: MoogLadder
 	let mixer: Mixer
